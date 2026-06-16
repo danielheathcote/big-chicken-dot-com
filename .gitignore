@@ -1,0 +1,26 @@
+# Node.js (Dependencies and build artifacts)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# AWS CDK Build and Context files
+.cdk.staging/
+cdk.out/
+.config/
+*.db
+
+# TypeScript compiled outputs (if any)
+*.js
+!jest.config.js
+*.d.ts
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# Local environment/secret files (Just in case you make them later)
+.env
+.env.local
+.env.*.local
