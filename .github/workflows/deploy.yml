@@ -13,6 +13,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Force Node 24 so actions targeting the deprecated Node 20 stop warning.
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
