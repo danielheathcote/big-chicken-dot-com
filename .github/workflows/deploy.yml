@@ -31,10 +31,15 @@ jobs:
         with:
           workspaces: backend
 
-      - name: Install cargo-lambda and Zig
-        # Both ship on PyPI; cargo-lambda auto-detects the ziglang module for
-        # cross-compilation to the arm64 Lambda target.
-        run: pipx install cargo-lambda && pipx inject cargo-lambda ziglang || pip install cargo-lambda ziglang
+      - name: Install cargo-lambda
+        run: pipx install cargo-lambda
+
+      - name: Install Zig
+        # cargo-lambda uses Zig as the cross-linker; it must be a real `zig`
+        # binary on PATH (0.13.0+).
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.13.0
 
       - name: Build Lambda binary
         working-directory: backend
