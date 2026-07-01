@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Cambridge Wind &amp; Rain</title>
+    <style>
+        body { font-family: monospace; }
+        a { color: #00FF00; }
+        svg { background: #001100; border: 1px solid #00FF00; max-width: 100%; height: auto; }
+        .axis { stroke: #007700; stroke-width: 1; }
+        .grid { stroke: #003300; stroke-width: 1; }
+        .label { fill: #00AA00; font-size: 11px; }
+        .windline { fill: none; stroke: #00FF00; stroke-width: 1.5; }
+        .winddot { fill: #00FF00; }
+        .box { fill: #005555; stroke: #00FFFF; stroke-width: 1; }
+        .median { stroke: #FFFF00; stroke-width: 1.5; }
+        h2 { font-weight: normal; }
+    </style>
+</head>
+<body bgcolor="#000000" text="#00FF00">
+    <center>
+        <h1>&lt; Cambridge Wind &amp; Rain &gt;</h1>
+        <p><a href="index.html">&laquo; back to big chicken</a></p>
+        <p id="meta">&nbsp;</p>
+
+        <h2>Wind speed @10m (km/h) &mdash; ensemble median</h2>
+        <div id="wind"></div>
+
+        <h2>Rain (mm/h) &mdash; box = p25..p75, yellow tick = p50</h2>
+        <div id="rain"></div>
+
+        <p id="status">Loading forecast&hellip;</p>
+        <p class="label">Hover any point/box for exact numbers.</p>
+    </center>
+
+    <script>
+    // Deployed forecast Lambda (Function URL). CORS is open, so a plain fetch works.
+    const FORECAST_URL = "https://ywkmswqfc3eibieuyyq6coxa5a0oawsh.lambda-url.eu-west-2.on.aws/forecast";
+
+    const W = 1000, H = 320, M = { t: 20, r: 20, b: 40, l: 55 };
+    const pw = W - M.l - M.r, ph = H - M.t - M.b;
+
+    const esc = s => String(s).replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
+    const xPos = (i, n) => M.l + (i + 0.5) / n * pw;          // centre of hour slot i
+    const yPos = (v, max) => M.t + (1 - v / max) * ph;
+    const dayLabel = iso => {                                  // "2026-07-01T00:00" -> "Jul 1"
+        const d = new Date(iso + ":00Z");
+        return d.toLocaleDateString('en-GB', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    };
+
+    // Shared chrome: axes, y-ticks (0..max), and a vertical gridline+label per day.
+    function frame(time, max, unit) {
+        const n = time.length;
+        let s = '';
+        // y grid + labels
+        const ticks = 4;
+        for (let t = 0; t <= ticks; t++) {
+            const v = max * t / ticks, y = yPos(v, max);
+            s += `<line class="grid" x1="${M.l}" y1="${y}" x2="${W - M.r}" y2="${y}"/>`;
+            s += `<text class="label" x="${M.l - 6}" y="${y + 3}" text-anchor="end">${(+v.toFixed(2))}</text>`;
+        }
+        // x day boundaries
+        for (let i = 0; i < n; i++) {
+            if (time[i].endsWith('T00:00')) {
+                const x = xPos(i, n);
+                s += `<line class="grid" x1="${x}" y1="${M.t}" x2="${x}" y2="${M.t + ph}"/>`;
+                s += `<text class="label" x="${x}" y="${H - M.b + 15}" text-anchor="middle">${dayLabel(time[i])}</text>`;
+            }
+        }
+        // axes
+        s += `<line class="axis" x1="${M.l}" y1="${M.t + ph}" x2="${W - M.r}" y2="${M.t + ph}"/>`;
+        s += `<line class="axis" x1="${M.l}" y1="${M.t}" x2="${M.l}" y2="${M.t + ph}"/>`;
+        s += `<text class="label" x="${M.l}" y="${M.t - 6}">${unit}</text>`;
+        return s;
+    }
+
+    function renderWind(time, wind) {
+        const n = time.length;
+        const max = Math.max(1, Math.ceil(Math.max(...wind.filter(v => v != null))));
+        let body = frame(time, max, 'km/h');
+        const pts = wind.map((v, i) => v == null ? null : `${xPos(i, n).toFixed(1)},${yPos(v, max).toFixed(1)}`)
+                        .filter(Boolean).join(' ');
+        body += `<polyline class="windline" points="${pts}"/>`;
+        wind.forEach((v, i) => {
+            if (v == null) return;
+            body += `<circle class="winddot" cx="${xPos(i, n).toFixed(1)}" cy="${yPos(v, max).toFixed(1)}" r="2">`
+                 +  `<title>${esc(time[i])}\n${v} km/h</title></circle>`;
+        });
+        document.getElementById('wind').innerHTML =
+            `<svg viewBox="0 0 ${W} ${H}" width="${W}">${body}</svg>`;
+    }
+
+    function renderRain(time, rain) {
+        const n = time.length;
+        const allP75 = rain.p75.filter(v => v != null);
+        let max = allP75.length ? Math.max(...allP75) : 0;
+        max = max <= 0 ? 1 : Math.ceil(max * 10) / 10;        // dry spell -> 0..1 mm
+        let body = frame(time, max, 'mm/h');
+        const bw = Math.max(2, pw / n - 1);
+        for (let i = 0; i < n; i++) {
+            const lo = rain.p25[i], mid = rain.p50[i], hi = rain.p75[i];
+            if (lo == null || hi == null) continue;
+            const x = xPos(i, n) - bw / 2;
+            const yHi = yPos(hi, max), yLo = yPos(lo, max);
+            body += `<g><title>${esc(time[i])}\np25 ${lo}  p50 ${mid}  p75 ${hi} mm/h</title>`;
+            body += `<rect class="box" x="${x.toFixed(1)}" y="${yHi.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0.5, yLo - yHi).toFixed(1)}"/>`;
+            if (mid != null) {
+                const ym = yPos(mid, max);
+                body += `<line class="median" x1="${x.toFixed(1)}" y1="${ym.toFixed(1)}" x2="${(x + bw).toFixed(1)}" y2="${ym.toFixed(1)}"/>`;
+            }
+            body += `</g>`;
+        }
+        document.getElementById('rain').innerHTML =
+            `<svg viewBox="0 0 ${W} ${H}" width="${W}">${body}</svg>`;
+    }
+
+    fetch(FORECAST_URL)
+        .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(d => {
+            const h = d.hourly;
+            document.getElementById('meta').textContent =
+                `${d.location.name} (${d.location.lat}, ${d.location.lon}) — generated ${d.generated_at}`;
+            renderWind(h.time, h.wind_speed_10m);
+            renderRain(h.time, h.rain);
+            document.getElementById('status').textContent =
+                `${h.time.length} hours (${h.time[0]} → ${h.time[h.time.length - 1]})`;
+        })
+        .catch(e => {
+            document.getElementById('status').textContent = 'Failed to load forecast: ' + e.message;
+        });
+    </script>
+</body>
+</html>
