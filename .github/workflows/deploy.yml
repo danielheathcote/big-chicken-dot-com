@@ -1,19 +1,51 @@
-name: Deploy Frontend to S3
+name: Deploy to AWS
 
 on:
   push:
     branches:
       - main
 
+# Avoid overlapping deploys stepping on the same CloudFormation stack.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Add this env block to force Node 24 and silence the warning
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # --- Backend: build the Rust Lambda (arm64) ---
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Install cargo-lambda and Zig
+        # Both ship on PyPI; cargo-lambda auto-detects the ziglang module for
+        # cross-compilation to the arm64 Lambda target.
+        run: pipx install cargo-lambda && pipx inject cargo-lambda ziglang || pip install cargo-lambda ziglang
+
+      - name: Build Lambda binary
+        working-directory: backend
+        run: cargo lambda build --release --arm64
+
+      # --- Infra: deploy the whole stack (bucket + site + Lambda) via CDK ---
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install infra dependencies
+        working-directory: infra
+        run: npm ci
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -22,6 +54,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: eu-west-2
 
-      - name: Deploy to S3
-        run: |
-          aws s3 sync frontend/ s3://${{ secrets.AWS_S3_BUCKET_NAME }} --delete
+      - name: CDK deploy
+        working-directory: infra
+        run: npx cdk deploy --require-approval never
